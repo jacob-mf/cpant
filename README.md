@@ -41,7 +41,14 @@ Method *'calculateUnweightedSingleShortestPathsTo'* applies *Dijkstra* algorithm
   
   
 There are two apps provided: *App* generates packets with exponential interarrival times, while *BurstyApp* alternates between active and idle periods. BurstyApp's implementation demonstrates the use of the FSMs (Finite State Machine). You can choose them in the *'omnet.ini'* file 
-as **.appType= "App" or "BurstyApp"
+as   
+
+`**.appType= "App"`  
+
+or  
+
+`**.appType= "BurstyApp"`  
+
 
 Project is only tested in *'Mesh'* network
 See files *'License'* and *'gpl'* for licesne details
