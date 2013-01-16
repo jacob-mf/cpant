@@ -1,0 +1,31 @@
+﻿Aquí se encuentra una pequeña descripción del proyecto CPANT para OMNeT++ 4.2.1
+Dicho proyecto se puede importar al espacio de trabajo de manera normal con la herramienta típica de OMNeT
+
+CPANT (Colored Pheromones Ants = Coloración de Feromonas con Hormigas)) es un algoritmo basado en la optimización de la colonia de hormigas de M. Dorigo y su aplicación en redes ad hoc como protocolo de encaminamiento AntHocNet.
+El archivo 'routing.cc' es el más importante del programa, describe los protocolos de encaminamiento.
+En el fichero 'routing.ned' se selecciona el protocolo de encaminamiento, por el valor del parámetro 'sort' que distingue: 1: estático, 2: antHocNet y 3: Cpant y desarrollamos:
+
+1. Encaminamiento de camino más corto estático. Las tablas de encaminamiento se rellenan en el comienzo de la simulación, mediante la clase cTopology; el modelo se mantiene simple intencionadamente para mejor entendimiento.
+
+La topología de red es la bien conocida "NTT backbone" creada por Mudassar Farooq.
+
+Cada nodo accede a la topología de la red de manera independiente, usando el objeto cTopology; luego se computan los caminos más corto hacia el resto de nodos, y se almacena los primeros nodos del camino en la celda de la tabla  de próximo salto. (Realmente la tabla contiene el número de puerto del próximo salto, no la dirección del nodo - la tabla contiene la dirección destino -> próxima dirección de salto). Todo esto sucede una sola vez, al comienzo de la simulación. La topología se mantiene estática, así que no se necesita nada para mantener las tablas actualizadas.
+
+Una vez las tablas se completan, los nodos comienzan el envío de paquetes a intervalos aleatorios. Cada nodo tiene lista de direcciones de destino en un parámetro, y para cada paquete elige aleatoriamente un destino de esta lista.
+
+2. Protocolo de encaminamiento AntHocNet, en versión muy simple, funciona casi todo como el anterior esperando hacerlo mas complejo en futuro. Se extiende la tabla de encaminamiento en un campo continuo (double) que representa la probabilidad de coger esa dirección.
+ La tabla de encaminamiento se inicializa a 1/NumNodos (sin mucha utilidad, probablemente se suprimirá este paso)
+El método 'calculateUnweightedSingleShortestPathsTo' aplica Dijkstra, pero  salvando sólo los caminos mas cortos, así que una futura mejora sera salvar mas caminos, para que tenga sentido usar una selección estocástica del camino (actualmente deshabilitada)
+
+3. Cpant no está disponible en este momento
+
+---------------------------------------------
+
+Hay dos aplicaciones (apps de envío de paquetes) posibles: 'App' genera paquetes con tiempos exponenciales, mientras 'BurstApp'  alterna entre tiempos activos e inactivos, demostrando el uso de máquina de estados finitos. Se seleccionan en el fichero 'omnet.ini' como:
+**.appType="App" o "BurstyApp" 
+  
+Sólo ha sido probado en la red 'Mesh'
+Revisar archivos 'License' y 'gpl' para ver detalles de licencia
+  
+2012 L.Jacob Mariscal Fernández basado en ejemplo de encaminamiento de Copyright (C) 1992-2008 Andras Varga
+
