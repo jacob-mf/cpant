@@ -33,7 +33,8 @@ network Cpant
         channel C1 extends ned.DatarateChannel
         {
             parameters:
-                //double jitter @unit(s) = default(uniform(1ms)); 
+                //double jitter @unit(s) = default(uniform(1ms));
+                @display("ls=green,2"); 
                 delay = default(1ms);
                 datarate = default(20Mbps);
         }
@@ -41,6 +42,7 @@ network Cpant
         {
             parameters:
                 //double jitter @unit(s) = default(uniform(8ms)); 
+                @display("ls=yellow,2");
                 delay = default(40ms);
                 datarate = default(20Mbps);
         }
@@ -48,6 +50,7 @@ network Cpant
         {
             parameters:
                 //double jitter @unit(s) = default(uniform(16ms)); 
+                @display("ls=orange,2");
                 delay = default(1ms);
                 datarate = default(8Mbps);
         }
@@ -55,33 +58,35 @@ network Cpant
         {
             parameters:
                 //double jitter @unit(s) = default(uniform(32ms)); 
+                @display("ls=red,2");
                 delay = default(80ms);
                 datarate = default(4Mbps);
         }
     submodules:
-        node[(height*width)+1]: Node {
+        node[13]: Node { // (height*width)+1
             parameters:
-                address = index;
-                @display("p=,,m,$width,40,40");
+                address = index+1;
+                @display("p=40,40,m,4,40,40"); //@display("p=,,m,$width,40,40");
             gates:
                 port[6];
         }
     connections allowunconnected:
-    node[1].port[0] <-->  C1 <--> node[6].port[1];
-    node[5].port[2] <-->  C3 <--> node[6].port[3];
-    node[9].port[1] <-->  C3 <--> node[6].port[4];   
-    node[3].port[4] <-->  C2 <--> node[6].port[5];
+    node[0].port[0] <-->  C1 <--> node[5].port[1];
+    node[4].port[2] <-->  C3 <--> node[5].port[3];
+    node[8].port[1] <-->  C3 <--> node[5].port[4];   
+    node[2].port[4] <-->  C2 <--> node[5].port[5];
+    node[5].port[2] <-->  C1 <--> node[6].port[3];
+    node[5].port[0] <-->  C3 <--> node[9].port[1];
+    node[9].port[2] <-->  C3 <--> node[10].port[3];
+    node[9].port[5] <-->  C4 <--> node[6].port[4];
+    
+    node[6].port[5] <-->  C3 <--> node[3].port[4];
+    node[2].port[2] <-->  C2 <--> node[3].port[3];
+    node[1].port[3] <-->  C4 <--> node[2].port[3];
+    node[2].port[0] <-->  C4 <--> node[7].port[1];
+    node[7].port[5] <-->  C1 <--> node[3].port[0];
     node[6].port[2] <-->  C1 <--> node[7].port[3];
-    node[6].port[0] <-->  C3 <--> node[10].port[1];
-    node[10].port[2] <-->  C3 <--> node[11].port[3];
-    node[10].port[5] <-->  C4 <--> node[7].port[4];
-    node[7].port[5] <-->  C3 <--> node[4].port[4];
-    node[3].port[2] <-->  C2 <--> node[4].port[3];
-    node[2].port[3] <-->  C4 <--> node[3].port[3];
-    node[3].port[0] <-->  C4 <--> node[8].port[1];
-    node[8].port[5] <-->  C1 <--> node[4].port[0];
-    node[7].port[2] <-->  C1 <--> node[8].port[3];
-    node[7].port[0] <-->  C1 <--> node[11].port[1];
-    node[11].port[2] <-->  C4 <--> node[12].port[3];
-    node[12].port[1] <-->  C4 <--> node[8].port[0];    
+    node[6].port[0] <-->  C1 <--> node[10].port[1];
+    node[10].port[2] <-->  C4 <--> node[11].port[3];
+    node[11].port[1] <-->  C4 <--> node[7].port[0];    
 }      
