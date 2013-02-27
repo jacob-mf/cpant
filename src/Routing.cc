@@ -25,9 +25,11 @@ class Routing : public cSimpleModule
   private:
     int myAddress;
     cPar *mySort; // MySort(defined by sort in omnet.ini) specifies sort of routing as 1 : Static , 2 : AntHocNet
+    cPar *coefPh;
     int maxHops;
     int redundant;
-
+    int baCounter; // counter of BA packets
+    int nbCounter; // counter of Hello msg (detect neighbors issue)
     // Tables
     typedef std::map<int,int> RoutingTable; // destaddr -> gateindex
     RoutingTable rtable;
@@ -42,6 +44,7 @@ class Routing : public cSimpleModule
 
     // Local functions
     bool locateNeighbor(int dest , int & outgate);
+    void updateRPTable (int dest, int outgate, double cost,int hops );
 
 
   protected:
@@ -58,7 +61,9 @@ void Routing::initialize()
     mySort =  &par("sort") ;
     dropSignal = registerSignal("drop");
     outputIfSignal = registerSignal("outputIf");
-
+    baCounter=0;
+    nbCounter=0;
+    coefPh= &par("coefPh"); // Pheromone update coefficient
     //
     // Brute force approach -- every node does topology discovery on its own,
     // and finds routes to all other nodes independently, at the beginning
@@ -106,7 +111,7 @@ void Routing::initialize()
                 int neighbourIndex = nlink->getLocalGate()->getIndex();
                 //EV << "Node: " << i << " OutGate :" << gateIndex <<  << endl;
                 char pkname[40];
-                sprintf(pkname,"pk-locate-neihgbor-node %d-from gate %d-#", myAddress,neighbourIndex );
+                sprintf(pkname,"pk-locate-neihgbor-node %d-from gate %d-#%d", myAddress,neighbourIndex,nbCounter++ );
                 EV << "generating packet " << pkname << endl;
                 Packet *pk = new Packet(pkname);
                 //cPar *packetLengthBytes = &par("packetLength");
@@ -184,6 +189,13 @@ bool Routing::locateNeighbor (int dest, int & outgate)
     return false;
 }
 
+void Routing::updateRPTable (int dest,int outgate, double cost,int hops )
+{
+    //double c = cost.dbl(); // use with simtime_t parameter
+    ptable [dest] [outgate] = ptable [dest] [outgate] * coefPh->doubleValue() + ((1/(cost * 10000) )* (1 - coefPh->doubleValue())); // use cost as Travel time; added 10⁻^3 to normalize (unitary)
+    EV << "Pheromone Table Updated, to value: "<< ptable[dest] [outgate] << " Dest: " << dest << " Gate "<< outgate << "Hops "<< hops << endl;
+}
+
 void Routing::handleMessage(cMessage *msg)
 {
     Packet *pk = check_and_cast<Packet *>(msg);
@@ -224,17 +236,97 @@ void Routing::handleMessage(cMessage *msg)
     {
         EV << "local delivery of packet " << pk->getName() << endl;
         pk->setTravelTime(pk->getArrivalTime() - pk->getCreationTime());
+        EV << "In (time calculated in Routing) : " << pk->getTravelTime() << endl;
+        EV << "Inside arrival branch, before send LocalOut" << endl;
+        unsigned int originGateId = pk->getArrivalGateId();
+        //unsigned int senderGateId2 = pk->getSenderGateId();
+        //EV << "originGateIds : " << originGateId << senderGateId2 << endl;
         send(pk, "localOut");
         emit(outputIfSignal, -1); // -1: local
+        if (pk->getSrcAddr() == destAddr) return; // same destination and source, no need to check AntHoc features
+        else{
         if (mySort->longValue() == 2) // AntHocNet
         {
 
+            if (pk->getKind() == 2) { // FA arrived -> BA created & launched back
+                //EV << "Inside AntHocNet-FA arrived branch" << endl;
+                //unsigned int originGateId = pk->getArrivalGateId();
+                //unsigned int senderGateId = pk->getSenderGateId();
+                //EV << "originGateIds : " << originGateId << senderGateId << endl;
+                //unsigned int sender = gate(senderGateId)->getIndex();
+                //EV << "sender : " << sender << endl;
+                //cGate * originGate = pk->getArrivalGate();
+                //int origin =0;
+                //if (originGate->isConnectedOutside() ) {
+                int origin = gate(originGateId)->getIndex();
+                EV << "origin (1st): " << origin << endl;
+                //}else {
+                //        origin = pk->getTransientNodes(pk->getHopCount()-1);
+                //        EV << "origin (good branch): " << origin << endl;
+                //        int dest = origin;
+                //        if  (locateNeighbor(dest,origin)) EV << "origin(gate) : " << origin << endl;
+                //       }
+
+                char pkname[40];
+                sprintf(pkname,"BA-%d-to-%d-#%d", myAddress, pk->getSrcAddr(), baCounter++);
+                EV << "generating Backward Ant " << pkname << endl;
+                Packet *ba = new Packet(pkname);
+                //ba->setByteLength(packetLengthBytes->longValue());
+                ba->setSrcAddr(myAddress);
+                ba->setKind(3); // BA packet
+                ba->setDestAddr(pk->getSrcAddr()); // fatal error, src address!
+                ba->setTransientNodesArraySize(99); // initialize to safe value
+                int k = pk->getHopCount();
+                ba->setHopCount(k);
+                ba->setTravelTime(pk->getTravelTime());
+
+                for (int i=0;i<k;i++) {
+                    ba->setTransientNodes(i,pk->getTransientNodes(i));
+                }
+                EV << "forwarding Backward Ant packet " << pk->getName() << " on gate index " << origin << " (coming back) " << endl;
+                emit(outputIfSignal, origin);
+                send(ba,"out",origin);
+            } else if (pk->getKind() == 3) { // BA arrived
+                EV << "Inside AntHocNet-BA arrived branch" << endl;
+                //int originGateId = pk->getArrivalGateId();
+                //EV << "originGateId : " << originGateId << endl;
+                unsigned int origin = gate(originGateId)->getIndex();
+                 EV << "origin : " << origin << endl;
+                // TOCheck update routing table
+                updateRPTable(destAddr,origin,pk->getTravelTime().dbl(),pk->getTransientNodesArraySize());
+                emit(dropSignal, (long)pk->getByteLength());
+                EV << "BA mission completed"<< endl;
+                // delete pk;
+            }
         }
         return;
-    }
+    }   }
     if (mySort->longValue() == 2) // AntHocNet
     {
+        if (pk->getKind() == 3) { // BA arrives
+            int baGateIndex =0;
+            pk->setHopCount(pk->getHopCount()-1);
+            destAddr = pk->getTransientNodes(pk->getHopCount()-1);
+            if (locateNeighbor(destAddr, baGateIndex)) { // &&(ptable2[outGateIndex] > 0)) { // check if destination is a neighbor node and possible way
+                EV << "Destination detected in neighbor table, gate: " << baGateIndex << " destination: " << destAddr << endl;
+                // TOCHECK update routing table
+                int originGateId = pk->getArrivalGateId();
+                unsigned int origin = gate(originGateId)->getIndex();
+                EV << "Origin gate id: "<< originGateId << "origin: "<< origin << endl;
+                updateRPTable(destAddr,origin,pk->getTravelTime().dbl(),pk->getTransientNodesArraySize());
+                EV << "forwarding BA packet " << pk->getName() << " on gate index " << baGateIndex << " steps left: " << pk->getHopCount() << endl;
+                //pk->setHopCount(pk->getHopCount()-1);
+                emit(outputIfSignal, baGateIndex);
+                send(pk, "out", baGateIndex);
 
+                return;
+            } else {
+                EV << "Error detected when routing BA: " << pk->getName() << " when routing to " << destAddr << endl;
+                emit(dropSignal, (long)pk->getByteLength());
+                delete pk;
+                return;
+            }
+        }
         RPtable::iterator it = ptable.find(destAddr);
             if (it==ptable.end())
             {
@@ -256,8 +348,9 @@ void Routing::handleMessage(cMessage *msg)
             EV << "Last 3 transient nodes: " << pk->getTransientNodes(k-3)  << pk->getTransientNodes(k-2) << pk->getTransientNodes(k-1) << " Total : " << k << endl;
         }
         int originGateId = pk->getArrivalGateId();
+        EV << "originGateId : " << originGateId << endl;
         unsigned int origin = gate(originGateId)->getIndex();
-
+        EV << "origin : " << origin << endl;
         for (int i=0;i<k;i++) {
             if (pk->getTransientNodes(i) == myAddress) {
                 EV << "Loop detected, in node: " << myAddress << endl;
@@ -318,6 +411,9 @@ void Routing::handleMessage(cMessage *msg)
             EV << "Node: "<< myAddress << " Destination :" << destAddr  << " Origin : " << origin <<  " Choices: " << choices << " Gate: " << j << " Prob:" << ptable2[j] << ntable[j] << endl;
         }
         if (choices > 1) {
+            if (pk->getKind() == 2) { // FA , implement flooding option
+                // coming soon
+            }
             choices--;
             int b = intuniform(0,choices); // in case of draw, select randomly the outgate
             EV << "Random chosen : " << b  << " Aux : " << aux[0] << aux[1] << aux[2] << aux[3] << endl;
