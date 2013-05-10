@@ -29,6 +29,8 @@ simple Routing
     parameters:
         int sort; // Sort of routing 1: Static, 2: AntHocNet, 3: CPANT (Colored Pheromones Ant)
         double coefPh; // Update Pheromone Coefficient 
+        int metrics;
+        bool flooding;
         @display("i=block/switch");
         @signal[drop](type="long");
         @signal[outputIf](type="int");

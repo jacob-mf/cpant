@@ -14,6 +14,8 @@
 #include <map>
 #include <omnetpp.h>
 #include "Packet_m.h"
+#include <iostream>
+#include <fstream>
 
 
 /**
@@ -25,18 +27,24 @@ class Routing : public cSimpleModule
   private:
     int myAddress;
     cPar *mySort; // MySort(defined by sort in omnet.ini) specifies sort of routing as 1 : Static , 2 : AntHocNet
-    cPar *coefPh;
+    cPar *coefPh; // Pheromon learning coefficient (defined in omnet.ini) should be on  0 < coefPh  < 1
+    cPar *flooding; // specify if use flooding technique (boolean defined in omnet.ini)
+    cPar *metrics;  // select either 1 :TimeToEndDelay 2: Hops 3: Lineal combination of previous metrics (defined in omnet.ini)
     int maxHops;
     int redundant;
     int baCounter; // counter of BA packets
+    int faCounter; // counter of FA packets
     int nbCounter; // counter of Hello msg (detect neighbors issue)
+    int visitor; // FA packets visitor counter to handle Visiting table
     // Tables
     typedef std::map<int,int> RoutingTable; // destaddr -> gateindex
     RoutingTable rtable;
     RoutingTable ntable; // Neighbors table; gateindex -> neighbor address
     typedef std::map<int,double> ProbTable; // gateindex -> probability
     typedef std::map<int,ProbTable> RPtable; // destaddr -> probability table of gateOutIndex
+    typedef std::map<int,long int> VisitingTable; // position visitor -> FA id visitor
     RPtable ptable;
+    VisitingTable vtable;
 
     // Signals
     simsignal_t dropSignal;
@@ -44,13 +52,16 @@ class Routing : public cSimpleModule
 
     // Local functions
     bool locateNeighbor(int dest , int & outgate);
-    void updateRPTable (int dest, int outgate, double cost,int hops );
-
+    void updateRPTable (int dest, unsigned int outgate, double cost,int hops );
+    int symmetricGate(int g);
+    bool wasHereBefore(long int id);
 
   protected:
     virtual void initialize();
     virtual void handleMessage(cMessage *msg);
+    virtual void finish();
 };
+
 
 Define_Module(Routing);
 
@@ -59,10 +70,12 @@ void Routing::initialize()
 {
     myAddress = getParentModule()->par("address");
     mySort =  &par("sort") ;
+    flooding = &par("flooding");
+    metrics = &par("metrics");
     dropSignal = registerSignal("drop");
     outputIfSignal = registerSignal("outputIf");
-    baCounter=0;
-    nbCounter=0;
+    //baCounter=0;
+    //nbCounter=0;
     coefPh= &par("coefPh"); // Pheromone update coefficient
     //
     // Brute force approach -- every node does topology discovery on its own,
@@ -165,6 +178,9 @@ void Routing::initialize()
                     continue; // not connected
                 }
             }
+            //int temp=3;
+            //double test = ptable[myAddress-1] [temp] +  (double) 1/temp;
+            //EV << "Double test: " <<  test << " temp⁻1: " << (double) 1/ temp << " Valor a anterior nodo en tercer puerto: "<< ptable[myAddress-1] [temp]<< endl;
     }
     else // Cpant routing
     {
@@ -175,6 +191,18 @@ void Routing::initialize()
     delete topo;
 }
 
+int Routing:: symmetricGate(int g )
+{
+    int sym= g+1;
+    if ((g== 0) || (g==2) || (g==4)) {
+        EV << "sym: " << sym << endl;
+
+    }else {
+        sym = g-1;
+        EV << "sym: " << sym << endl;
+    }
+    return sym;
+}
 bool Routing::locateNeighbor (int dest, int & outgate)
 {
     for (unsigned int i=0; i < (ntable.size()); i++) {
@@ -188,12 +216,31 @@ bool Routing::locateNeighbor (int dest, int & outgate)
     }
     return false;
 }
-
-void Routing::updateRPTable (int dest,int outgate, double cost,int hops )
+bool Routing::wasHereBefore(long int id)
+{
+    for (int i=0; i< visitor; i++){
+        if (vtable[i] == id) return true;
+    }
+    return false;
+}
+void Routing::updateRPTable (int dest,unsigned int outgate, double cost,int hops )
 {
     //double c = cost.dbl(); // use with simtime_t parameter
+    // evaporation in other values
+    for (unsigned int j=0; j< ntable.size();j++){
+        if (j != outgate) {
+            ptable [dest] [j] = ptable [dest] [j] * coefPh->doubleValue();
+        }
+    }
+
+    if (metrics->longValue() ==1) // Travel time
     ptable [dest] [outgate] = ptable [dest] [outgate] * coefPh->doubleValue() + ((1/(cost * 10000) )* (1 - coefPh->doubleValue())); // use cost as Travel time; added 10⁻^3 to normalize (unitary)
-    EV << "Pheromone Table Updated, to value: "<< ptable[dest] [outgate] << " Dest: " << dest << " Gate "<< outgate << "Hops "<< hops << endl;
+    else if (metrics->longValue() == 2) // Hops
+        if (hops > 1 )  ptable [dest] [outgate] = ptable [dest] [outgate] * coefPh->doubleValue() + (double) 1/hops; // use cost as Hops, makes hops more accuracy for paths
+        else ptable [dest] [outgate] = ptable [dest] [outgate] * coefPh->doubleValue() + ((1/(hops) )* (1 - coefPh->doubleValue())); // use cost as Hops;
+    else  // Linear combination of Travel time and hops
+        ptable [dest] [outgate] = ptable [dest] [outgate] * coefPh->doubleValue() + 0.5*( (((1/(hops) )* (1 - coefPh->doubleValue())) + ((1/(cost * 10000) )* (1 - coefPh->doubleValue())))); // use lineal combination ; added 10⁻^3 to normalize (unitary)
+    EV << "Pheromone Table Updated to value: "<< ptable [dest] [outgate] << " Dest: " << dest << " Gate "<< outgate << "Hops "<< hops << endl;
 }
 
 void Routing::handleMessage(cMessage *msg)
@@ -215,6 +262,7 @@ void Routing::handleMessage(cMessage *msg)
             // update neighbor table
             int originGateId = pk->getArrivalGateId();
             int origin = gate(originGateId)->getIndex();
+            //int symGateId = pk->getSenderGateId();
             if (ntable[origin] ==  pk->getSrcAddr()) { // neighbor table already updated
                 EV << "Neighbor table is already up to date, discarding packet:  "<< pk->getName() << endl;
                 EV << "Redundant packets : "<< redundant++ << endl;
@@ -237,10 +285,10 @@ void Routing::handleMessage(cMessage *msg)
         EV << "local delivery of packet " << pk->getName() << endl;
         pk->setTravelTime(pk->getArrivalTime() - pk->getCreationTime());
         EV << "In (time calculated in Routing) : " << pk->getTravelTime() << endl;
-        EV << "Inside arrival branch, before send LocalOut" << endl;
+        //EV << "Inside arrival branch, before send LocalOut" << endl;
         unsigned int originGateId = pk->getArrivalGateId();
-        //unsigned int senderGateId2 = pk->getSenderGateId();
-        //EV << "originGateIds : " << originGateId << senderGateId2 << endl;
+        unsigned int senderGateId = pk->getSenderGateId();
+        EV << "originGateIds : " << originGateId << " senderGateId: " << senderGateId << endl;
         send(pk, "localOut");
         emit(outputIfSignal, -1); // -1: local
         if (pk->getSrcAddr() == destAddr) return; // same destination and source, no need to check AntHoc features
@@ -259,7 +307,10 @@ void Routing::handleMessage(cMessage *msg)
                 //int origin =0;
                 //if (originGate->isConnectedOutside() ) {
                 int origin = gate(originGateId)->getIndex();
-                EV << "origin (1st): " << origin << endl;
+                int symmetric = symmetricGate(origin);
+
+                //int symmetric = gate(senderGateId);
+                EV << "origin (1st): " << origin << " symmetric: " << symmetric << " Id. pk: "<< pk->getId() << endl;
                 //}else {
                 //        origin = pk->getTransientNodes(pk->getHopCount()-1);
                 //        EV << "origin (good branch): " << origin << endl;
@@ -274,16 +325,22 @@ void Routing::handleMessage(cMessage *msg)
                 //ba->setByteLength(packetLengthBytes->longValue());
                 ba->setSrcAddr(myAddress);
                 ba->setKind(3); // BA packet
-                ba->setDestAddr(pk->getSrcAddr()); // fatal error, src address!
-                ba->setTransientNodesArraySize(99); // initialize to safe value
+                ba->setDestAddr(pk->getSrcAddr()); // fatal error, its src address!
+
                 int k = pk->getHopCount();
-                ba->setHopCount(k);
+                ba->setTransientNodesArraySize(k); // initialize to safe value, store hops count
+                ba->setHopCount(0);
                 ba->setTravelTime(pk->getTravelTime());
 
                 for (int i=0;i<k;i++) {
                     ba->setTransientNodes(i,pk->getTransientNodes(i));
                 }
-                EV << "forwarding Backward Ant packet " << pk->getName() << " on gate index " << origin << " (coming back) " << endl;
+                EV << "forwarding Backward Ant packet " << ba->getName() << " on gate index " << origin << " (coming back) " << endl;
+                // BA needs to update Routing table!! 2 times, bidirectional
+                //updateRPTable(destAddr,origin,pk->getTravelTime().dbl(),ba->getTransientNodesArraySize()); // same node, dest, not neccessary
+                updateRPTable(ba->getDestAddr(),origin,pk->getTravelTime().dbl(),ba->getTransientNodesArraySize());
+                //delete pk;
+                EV << "Control packets, neighbors: " << nbCounter << " FA: " << faCounter++ << " BA: "<< baCounter << endl; // increase FA when received
                 emit(outputIfSignal, origin);
                 send(ba,"out",origin);
             } else if (pk->getKind() == 3) { // BA arrived
@@ -291,9 +348,12 @@ void Routing::handleMessage(cMessage *msg)
                 //int originGateId = pk->getArrivalGateId();
                 //EV << "originGateId : " << originGateId << endl;
                 unsigned int origin = gate(originGateId)->getIndex();
-                 EV << "origin : " << origin << endl;
-                // TOCheck update routing table
-                updateRPTable(destAddr,origin,pk->getTravelTime().dbl(),pk->getTransientNodesArraySize());
+                int symmetric = symmetricGate(origin);
+                EV << "origin : " << origin << " symmetric: " << symmetric << endl;
+                // TOCheck update routing table ,symmetric
+                //updateRPTable(destAddr,origin,simTime().dbl() - pk->getCreationTime().dbl(),pk->getTransientNodesArraySize()); // same dest and actual node, not neccessary
+                updateRPTable(pk->getSrcAddr(),origin,simTime().dbl() - pk->getCreationTime().dbl(),pk->getTransientNodesArraySize());
+                pk->setHopCount(pk->getHopCount()+1);
                 emit(dropSignal, (long)pk->getByteLength());
                 EV << "BA mission completed"<< endl;
                 // delete pk;
@@ -305,20 +365,22 @@ void Routing::handleMessage(cMessage *msg)
     {
         if (pk->getKind() == 3) { // BA arrives
             int baGateIndex =0;
-            pk->setHopCount(pk->getHopCount()-1);
-            destAddr = pk->getTransientNodes(pk->getHopCount()-1);
+            pk->setHopCount(pk->getHopCount()+1);
+            destAddr = pk->getTransientNodes(pk->getTransientNodesArraySize()-1 -pk->getHopCount());
             if (locateNeighbor(destAddr, baGateIndex)) { // &&(ptable2[outGateIndex] > 0)) { // check if destination is a neighbor node and possible way
                 EV << "Destination detected in neighbor table, gate: " << baGateIndex << " destination: " << destAddr << endl;
                 // TOCHECK update routing table
                 int originGateId = pk->getArrivalGateId();
+                //int senderGateId = pk->getSenderGateId();
                 unsigned int origin = gate(originGateId)->getIndex();
-                EV << "Origin gate id: "<< originGateId << "origin: "<< origin << endl;
-                updateRPTable(destAddr,origin,pk->getTravelTime().dbl(),pk->getTransientNodesArraySize());
-                EV << "forwarding BA packet " << pk->getName() << " on gate index " << baGateIndex << " steps left: " << pk->getHopCount() << endl;
+                unsigned int symmetric = symmetricGate(origin);
+                EV << "Origin gate id: "<< originGateId << " origin: "<< origin << " symmetric: " << symmetric << endl;
+                updateRPTable(destAddr,baGateIndex,pk->getTravelTime().dbl(),1);
+                updateRPTable(pk->getSrcAddr(),origin,(simTime()-pk->getCreationTime()).dbl(),pk->getHopCount());
+                EV << "forwarding BA packet " << pk->getName() << " on gate index " << baGateIndex << " steps left: " << pk->getTransientNodesArraySize()-pk->getHopCount() << endl;
                 //pk->setHopCount(pk->getHopCount()-1);
                 emit(outputIfSignal, baGateIndex);
                 send(pk, "out", baGateIndex);
-
                 return;
             } else {
                 EV << "Error detected when routing BA: " << pk->getName() << " when routing to " << destAddr << endl;
@@ -340,6 +402,9 @@ void Routing::handleMessage(cMessage *msg)
         {
             EV << "Max hops = " << maxHops << " reached, discarding route & packet " << pk->getName() << endl;
             emit(dropSignal, (long)pk->getByteLength());
+            if (pk->getKind() == 2) { // FA branch, counting
+            EV << "Control packets, neighbors: " << nbCounter << " FA: " << faCounter++ << " BA: "<< baCounter << endl; // increase FA
+            }
             delete pk;
             return;
         }
@@ -348,7 +413,22 @@ void Routing::handleMessage(cMessage *msg)
             EV << "Last 3 transient nodes: " << pk->getTransientNodes(k-3)  << pk->getTransientNodes(k-2) << pk->getTransientNodes(k-1) << " Total : " << k << endl;
         }
         int originGateId = pk->getArrivalGateId();
-        EV << "originGateId : " << originGateId << endl;
+        EV << "originGateId : " << originGateId << " Id pk: " << pk->getTreeId() << endl;
+        if ((pk->getKind() == 2) && (flooding->boolValue())){ // FA arrives and active flooding
+            //VisitingTable::iterator itv = vtable.find(pk->getTreeId());
+                if ((visitor == 0) || (! wasHereBefore(pk->getTreeId())))
+                {
+                    vtable[visitor] = pk->getTreeId();
+                    EV << "Updated  visiting table, position: "<< visitor << " FA id: " << vtable[visitor] << endl;
+                                    visitor++;
+                } else {
+                    EV << "FA id: " <<  pk->getTreeId() << " already checked here by best route, discarding packet " << pk->getName() << endl;
+                    emit(dropSignal, (long)pk->getByteLength());
+                    EV << "Control packets, neighbors: " << nbCounter << " FA: " << faCounter++ << " BA: "<< baCounter << endl; // increase FA before deleted
+                    delete pk;
+                    return;
+                }
+                                 }
         unsigned int origin = gate(originGateId)->getIndex();
         EV << "origin : " << origin << endl;
         for (int i=0;i<k;i++) {
@@ -378,7 +458,7 @@ void Routing::handleMessage(cMessage *msg)
         RoutingTable aux; // choice -> gateIndex
         for (unsigned int j=0; j< ntable.size();j++)
         {
-          if (j != origin) { // skipping origin gate
+          if (((pk->getHopCount() == 0)) || (j != origin)) { // skipping origin gate
             if (win < ptable2[j] )
             {
                 for (int i=0;i<k;i++) {
@@ -392,7 +472,10 @@ void Routing::handleMessage(cMessage *msg)
                 win = ptable2[j];
                 outGateIndex = j;
                 aux[choices]= j;
-                choices++;
+                if (pk->getKind() == 2) { // FA , not only seek on best route way
+                    choices++;
+                            }
+                else choices=1; // Data packets takes only the best route
                 }
             }else if ((ptable2[j] > 0) && (win == ptable2[j])){
                 for (int i=0;i<k;i++) {
@@ -405,14 +488,36 @@ void Routing::handleMessage(cMessage *msg)
                 } else {
                 aux[choices]=j;
                 choices++;      }
+            }else if ((ptable2[j] > 0) && (pk->getKind() == 2)) { // FA include all no null possibilities
+                for (int i=0;i<k;i++) {
+                                    if (pk->getTransientNodes(i) == ntable[j]) {
+                                    curl = true; i = k; // loop detected
+                                    EV << "Curl skipped, node :  " << ntable[j] <<endl;
+                                    }
+                                }
+                                if (curl) {
+                                } else {
+                                aux[choices]=j;
+                                choices++;      }
             }
           }
           curl = false;
-            EV << "Node: "<< myAddress << " Destination :" << destAddr  << " Origin : " << origin <<  " Choices: " << choices << " Gate: " << j << " Prob:" << ptable2[j] << ntable[j] << endl;
+            EV << "Node: "<< myAddress << " Destination :" << destAddr  << " Origin : " << origin <<  " Choices: " << choices << " Gate: " << j << " Prob:" << ptable2[j] << " win: "<< win << " neighbour:"<< ntable[j] << endl;
         }
         if (choices > 1) {
-            if (pk->getKind() == 2) { // FA , implement flooding option
-                // coming soon
+            if ((pk->getKind() == 2) && (flooding->boolValue())) { // FA , implement flooding option
+                pk->setTransientNodes(pk->getHopCount() ,myAddress);
+                pk->setHopCount(pk->getHopCount()+1);
+                for (int i=0; i < choices; i++) {
+                    outGateIndex= aux[i];
+                    win = ptable2[aux[i]];
+                    EV << "Flooding! forwarding packet " << pk->getName() << " on gate index " << outGateIndex << " with prob: " << win << endl;
+                    emit(outputIfSignal, outGateIndex);
+                    if (i == 0)  send(pk,"out",outGateIndex);
+                    else send(pk->dup(), "out", outGateIndex);
+                }
+                aux.clear();
+                return;
             }
             choices--;
             int b = intuniform(0,choices); // in case of draw, select randomly the outgate
@@ -422,6 +527,9 @@ void Routing::handleMessage(cMessage *msg)
         } else if (choices == 0) {
             EV << "No choices to route, so discarding route & packet " << pk->getName() << endl;
             emit(dropSignal, (long)pk->getByteLength());
+            if (pk->getKind() == 2) {
+            EV << "Control packets, neighbors: " << nbCounter << " FA: " << faCounter++ << " BA: "<< baCounter << endl; // increase FA before deleting
+            }
             delete pk;
             return;
         }
@@ -440,6 +548,9 @@ void Routing::handleMessage(cMessage *msg)
     {
         EV << "address " << destAddr << " unreachable, discarding packet " << pk->getName() << endl;
         emit(dropSignal, (long)pk->getByteLength());
+        if (pk->getKind() == 2) {
+            EV << "Control packets, neighbors: " << nbCounter << " FA: " << faCounter++ << " BA: "<< baCounter << endl; // increase FA before deleting it
+        }
         delete pk;
         return;
     }
@@ -453,3 +564,29 @@ void Routing::handleMessage(cMessage *msg)
     send(pk, "out", outGateIndex);
 }
 
+void Routing::finish()
+{
+    //EV << "Simulation time: " << simTime()<< endl;
+    //recordScalar("Simulation time: ", simTime());
+    //EV << "Control packets: (nb, fa, ba) : " << nbCounter << faCounter << baCounter << endl;
+    struct controlPkcounter{
+        int nb;
+        int fa, ba, sum;
+    };
+    controlPkcounter count;
+    //cObject * punt = &count;
+    count.nb = nbCounter; count.fa = faCounter; count.ba = baCounter; count.sum = count.nb + count.ba +count.fa;
+    //snapshot(this,"Control packets ");
+//using namespace std;
+
+//int main () {
+  std::ofstream myfile("control-packet.txt", myfile.app );
+  if (myfile.is_open())
+  {
+
+    myfile << count.nb << "," << count.fa << "," << count.ba << "," << count.sum <<  "\n";
+    myfile.close();
+  }
+  else { EV << "Unable to open file" << endl; }
+
+}
