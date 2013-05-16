@@ -54,7 +54,7 @@ network Anthoc
             node[width*i].port[0] <--> C <--> node[(width*(i+1))].port[1] if i<height-1;
             node[width*i].port[2] <--> C <--> node[(width*i)+1].port[3] if i<height-1;
         }
-        node[56].port[2] <--> C <--> node[57].port[3];
+        node[width*(height-1)].port[2] <--> C <--> node[1+(width*(height-1))].port[3]; // not need when more 
 }
 
 

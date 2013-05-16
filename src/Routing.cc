@@ -35,6 +35,9 @@ class Routing : public cSimpleModule
     int baCounter; // counter of BA packets
     int faCounter; // counter of FA packets
     int nbCounter; // counter of Hello msg (detect neighbors issue)
+    int dataCounter;// data packets counter
+    int dropCounter; // data drop packets counter
+    int totalCounter;// total packets counter
     int visitor; // FA packets visitor counter to handle Visiting table
     // Tables
     typedef std::map<int,int> RoutingTable; // destaddr -> gateindex
@@ -74,8 +77,8 @@ void Routing::initialize()
     metrics = &par("metrics");
     dropSignal = registerSignal("drop");
     outputIfSignal = registerSignal("outputIf");
-    //baCounter=0;
-    //nbCounter=0;
+    baCounter=0;
+    nbCounter=0;totalCounter=0; dropCounter=0;dataCounter=0;
     coefPh= &par("coefPh"); // Pheromone update coefficient
     //
     // Brute force approach -- every node does topology discovery on its own,
@@ -289,6 +292,9 @@ void Routing::handleMessage(cMessage *msg)
         unsigned int originGateId = pk->getArrivalGateId();
         unsigned int senderGateId = pk->getSenderGateId();
         EV << "originGateIds : " << originGateId << " senderGateId: " << senderGateId << endl;
+        if (pk->getKind() == 0) { // Data packet arrives
+            dataCounter++;
+        }
         send(pk, "localOut");
         emit(outputIfSignal, -1); // -1: local
         if (pk->getSrcAddr() == destAddr) return; // same destination and source, no need to check AntHoc features
@@ -393,6 +399,10 @@ void Routing::handleMessage(cMessage *msg)
             if (it==ptable.end())
             {
                 EV << "address " << destAddr << " unreachable, discarding packet " << pk->getName() << endl;
+                if (pk->getKind() == 0) { // Data packet lost
+                            dataCounter++;
+                            dropCounter++;
+                        }
                 emit(dropSignal, (long)pk->getByteLength());
                 delete pk;
                 return;
@@ -405,6 +415,9 @@ void Routing::handleMessage(cMessage *msg)
             if (pk->getKind() == 2) { // FA branch, counting
             EV << "Control packets, neighbors: " << nbCounter << " FA: " << faCounter++ << " BA: "<< baCounter << endl; // increase FA
             }
+            if (pk->getKind() == 0) { // Data packet lost
+                        dataCounter++;dropCounter++;
+                    }
             delete pk;
             return;
         }
@@ -530,6 +543,9 @@ void Routing::handleMessage(cMessage *msg)
             if (pk->getKind() == 2) {
             EV << "Control packets, neighbors: " << nbCounter << " FA: " << faCounter++ << " BA: "<< baCounter << endl; // increase FA before deleting
             }
+            if (pk->getKind() == 0) { // Data packet miss
+                        dataCounter++; dropCounter++;
+                    }
             delete pk;
             return;
         }
@@ -578,13 +594,13 @@ void Routing::finish()
     count.nb = nbCounter; count.fa = faCounter; count.ba = baCounter; count.sum = count.nb + count.ba +count.fa;
     //snapshot(this,"Control packets ");
 //using namespace std;
-
+  totalCounter= dataCounter+count.sum;
 //int main () {
-  std::ofstream myfile("control-packet.txt", myfile.app );
+  std::ofstream myfile("control-packet.csv", myfile.app );
   if (myfile.is_open())
   {
 
-    myfile << count.nb << "," << count.fa << "," << count.ba << "," << count.sum <<  "\n";
+    myfile << count.nb << "," << count.fa << "," << count.ba << "," << count.sum <<  "," <<  dataCounter << "," <<  dropCounter << "," << totalCounter <<  "\n";
     myfile.close();
   }
   else { EV << "Unable to open file" << endl; }
